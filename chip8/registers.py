@@ -10,7 +10,7 @@ class Registers(object):
         return self.reg.__repr__()
 
     def set(self, k: int, v: int) -> None: 
-        self.reg[k] = v
+        self.reg[k] = v % 0x100
     
     def get(self, k: int) -> int: 
         return self.reg[k]

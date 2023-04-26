@@ -19,13 +19,22 @@ class Display(list):
 
     def _xy_to_idx(self, x: int, y: int) -> int:
         '''Converts XY coordinates to a display memory address'''
-        assert (y * self.SCR_W + x)-3 <= self.SCR_PIX
-        return y * self.SCR_W + x
+        idx = y * self.SCR_W + x
+        if idx >= 0 and idx < self.SCR_PIX:
+            return idx
+        else:
+            return -1
 
     def set_pixel(self, x: int, y: int, v: int) -> None:
         '''Sets the pixel at xy to value v'''
-        self[self._xy_to_idx(x, y)] = v
+        idx = self._xy_to_idx(x, y)
+        if idx != -1:
+            self[idx] = v
 
     def get_pixel(self, x: int, y: int) -> int:
         '''Returns the value stored in the pixel at xy'''
-        return self[self._xy_to_idx(x, y)]
+        idx = self._xy_to_idx(x, y)
+        if idx != -1:
+            return self[idx]
+        else:
+            return 0

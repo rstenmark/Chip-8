@@ -1,11 +1,13 @@
 from typing import Dict, Callable
 from chip8.parser import ParsedInstruction
 from random import randint
+from time import perf_counter_ns as timer
 import chip8.parser as parser
 import chip8.registers as registers
 import chip8.stack as stack
 import chip8.memory as memory
 import chip8.display as display
+
 
 
 class CPU(object):
@@ -63,13 +65,14 @@ class CPU(object):
             old_ip = self.ip
             # execute opcode
             self._method_lookup_table[inst.opcode](self, inst)
+            # Decrement timers
+            if(self.st > 0): self.st -= 1
+            if(self.dt > 0): self.dt -= 1
             # if IP did not change, increment it
             if old_ip == self.ip:
                 self.ip += 2
 
-        # Decrement timers
-        if(self.st > 0): self.st -= 1
-        if(self.dt > 0): self.dt -= 1
+        
 
     def _push(self, v: int) -> None:
         '''Pushes a value onto the stack and increments SP.'''
@@ -96,7 +99,7 @@ class CPU(object):
 
     def _00EE(self, inst: ParsedInstruction) -> int:
         '''Return from a subroutine (function). 
-        Overwrites IP with 12-bit address popped off stack.
+        Overwrites IP with 12-bit address popped off stack plus a 2 byte offset.
         1 cycle.'''
         self.ip = self.stack.pop()
         return 1
@@ -105,15 +108,20 @@ class CPU(object):
         '''Performs an immediate jump.
         Overwrites IP with a 12-bit immediate address
         1 cycle.'''
-        self.ip = inst.nnn
+        if inst.nnn % 2 != 0:
+            # "nudge" IP if not 2-byte unaligned
+            self.set_ip(inst.nnn + 0x1)
+        else:
+            self.set_ip(inst.nnn)
+        
         return 1
 
     def _2nnn(self, inst: ParsedInstruction) -> int:
         '''Call subroutine (function).
-        Pushes return address onto the stack,
+        Pushes return address (plus 2) onto the stack,
         then jumps to nnn.
         1 cycle.'''
-        self._push(self.ip)
+        self._push(self.ip + 0x2)
         self.set_ip(inst.nnn)
         return 1
 
@@ -125,16 +133,30 @@ class CPU(object):
             self.ip += 4
         return 1
 
-    def _4xkk(self, inst: ParsedInstruction) -> int: ...
-    def _5xy0(self, inst: ParsedInstruction) -> int: ...
+    def _4xkk(self, inst: ParsedInstruction) -> int:
+        '''Skip next instruction if Vx != kk
+        1 cycle.'''
+        if self.reg.get(inst.x) != inst.kk:
+            # Relative jump
+            self.ip += 4
+        return 1
+
+    def _5xy0(self, inst: ParsedInstruction) -> int:
+        '''Skip next instruction if Vx == Vy
+        1 cycle.'''
+        if self.reg.get(inst.x) == self.reg.get(inst.y):
+            # Relative jump
+            self.ip += 4
+        return 1
     def _6xkk(self, inst: ParsedInstruction) -> int:
         '''Set Vx = kk
         1 cycle.'''
-        self.reg.set(inst.x, inst.kk)
+        self.reg.set(inst.x, inst.kk) 
+
     def _7xkk(self, inst: ParsedInstruction) -> int:
         '''Set Vx = Vx + kk
         1 cycle.'''
-        self.reg.set(inst.x, inst.kk)
+        self.reg.set(inst.x, self.reg.get(inst.x) + inst.kk)
         return 1
 
     def _8xy0(self, inst: ParsedInstruction) -> int:
@@ -143,21 +165,94 @@ class CPU(object):
         self.reg.set(inst.x, self.reg.get(inst.y))
         return 1
 
-    def _8xy1(self, inst: ParsedInstruction) -> int: ...
-    def _8xy2(self, inst: ParsedInstruction) -> int: ...
-    def _8xy3(self, inst: ParsedInstruction) -> int: ...
-    def _8xy4(self, inst: ParsedInstruction) -> int: ...
-    def _8xy5(self, inst: ParsedInstruction) -> int: ...
-    def _8xy6(self, inst: ParsedInstruction) -> int: ...
-    def _8xy7(self, inst: ParsedInstruction) -> int: ...
-    def _8xyE(self, inst: ParsedInstruction) -> int: ...
+    def _8xy1(self, inst: ParsedInstruction) -> int:
+        '''Set Vx = Vx OR Vy
+        Quirks:
+        COSMAC: Resets VF
+        1 cycle.'''
+        self.reg.set(inst.x, self.reg.get(inst.x) | self.reg.get(inst.y))
+        return 1
+
+    def _8xy2(self, inst: ParsedInstruction) -> int:
+        '''Set Vx = Vx OR Vy
+        Quirks:
+        COSMAC: Resets VF
+        1 cycle.'''
+        self.reg.set(inst.x, self.reg.get(inst.x) & self.reg.get(inst.y))
+        return 1
+
+    def _8xy3(self, inst: ParsedInstruction) -> int:
+        '''Set Vx = Vx XOR Vy
+        Quirks:
+        COSMAC: Resets VF
+        1 cycle.'''
+        self.reg.set(inst.x, self.reg.get(inst.x) ^ self.reg.get(inst.y))
+        return 1
+
+    def _8xy4(self, inst: ParsedInstruction) -> int:
+        '''Set Vx = Vx + Vy, set VF = carry
+        1 cycle.'''
+        result = self.reg.get(inst.x) + self.reg.get(inst.y)
+        self.reg.set(inst.x, result & 0x00ff)
+        if result % 255 > 0:
+            self.reg.set(0xF, 1)
+        else:
+            self.reg.set(0xF, 0)
+        return 1
+
+    def _8xy5(self, inst: ParsedInstruction) -> int:
+        '''Set Vx = Vx - Vy
+        If Vx > Vy, set VF = 1 else VF = 0
+        1 cycle.'''
+        vx, vy = self.reg.get(inst.x), self.reg.get(inst.y)
+        self.reg.set(inst.x, vx - vy)
+        if vx > vy:
+            self.reg.set(0xF, 1)
+        else:
+            self.reg.set(0xF, 0)
+        return 1
+
+    def _8xy6(self, inst: ParsedInstruction) -> int:
+        '''If Vx LSB == 1 set VF = 1 else VF = 0. Then Vx = Vx >> 1 (divide by 2).'''
+        self.reg.set(inst.x, self.reg.get(inst.x) >> 1)
+        if self.reg.get(inst.x) & 0b0000_0001:
+            self.reg.set(0xF, 1)
+        else:
+            self.reg.set(0xF, 0)
+        return 1
+
+    def _8xy7(self, inst: ParsedInstruction) -> int:
+        '''Set Vx = Vy - Vx
+        If Vy > Vx, set VF = 1 else VF = 0
+        1 cycle.'''
+        vx, vy = self.reg.get(inst.x), self.reg.get(inst.y)
+        self.reg.set(inst.x, vy - vx)
+        if vy > vx:
+            self.reg.set(0xF, 1)
+        else:
+            self.reg.set(0xF, 0)
+        return 1
+
+    def _8xyE(self, inst: ParsedInstruction) -> int:
+        '''If Vx MSB == 1 set VF = 1 else VF = 0. Then Vx = Vx << 1 (multiply by 2).'''
+        self.reg.set(inst.x, self.reg.get(inst.x) << 1)
+        if self.reg.get(inst.x) & 0b1000_0000:
+            self.reg.set(0xF, 1)
+        else:
+            self.reg.set(0xF, 0)
+        return 1
+
     def _9xy0(self, inst: ParsedInstruction) -> int: ...
     def _Annn(self, inst: ParsedInstruction) -> int:
         '''Overwrites the value in register I with nnn.
         1 cycle.'''
         self.i = inst.nnn
         return 1
-    def _Bnnn(self, inst: ParsedInstruction) -> int: ...
+
+    def _Bnnn(self, inst: ParsedInstruction) -> int:
+        '''Jump to location nnn + V0'''
+        self.set_ip(self.reg.get(0x0) + inst.nnn)
+
     def _Cxkk(self, inst: ParsedInstruction) -> int:
         '''Set Vx = random byte AND kk
         1 cycle.'''
@@ -170,21 +265,27 @@ class CPU(object):
         # Sprites may be up to 15 bytes, or 8x15 pixels
         # Sprites are always 8 pixels wide
 
-        # Read n bytes starting at I at 2-byte alignments
+        # Read n bytes starting at I unaligned
         b: list[int] = list()
-        for ii in range(0, inst.n, 2):
-            b.append(self.mem[self.i + ii].bytes & 0b1111_1111_0000_0000 >> 8)
-            b.append(self.mem[self.i + ii].bytes & 0b0000_0000_1111_1111)
+        for off in range(0, inst.n):
+            b.append(self.mem.read_byte_unaligned(self.i + off))
 
         # xx = x + (0, 7)
         # yy = y + (0, 14)
         xx, yy = 0, 0
-        x, y = self.reg.get(inst.x), self.reg.get(inst.y)
+        x = self.reg.get(inst.x) & self.display.SCR_W-1
+        y = self.reg.get(inst.y) & self.display.SCR_H-1
+
+        # Unset VF before collision checks
+        # has intended side-effect of resetting VF
+        self.reg.set(0xF, 0)
+
         for byte in b:
             for xx in range(8):
                 # Extract bit:
                 # Shift right up to 7 times and mask off MSBs
                 bit = (byte >> 7 - xx) & 0b0000_0001
+                #print(f'{bin(byte)}, >> 7 - {xx} = {bin(bit)}')
 
                 if bit == 0b1:
                     if self.display.get_pixel(x + xx,  y + yy) == 1:
@@ -197,9 +298,6 @@ class CPU(object):
                         self.display.set_pixel(x + xx, y + yy, 1)
 
             yy += 1
-                
-
-
 
     def _Ex9E(self, inst: ParsedInstruction) -> int: ...
     def _ExA1(self, inst: ParsedInstruction) -> int: ...
@@ -215,13 +313,46 @@ class CPU(object):
         The value in Vx is stored in the delay timer
         1 cycle.'''
         self.dt = self.reg.get(inst.x)
+        return 1
 
-    def _Fx18(self, inst: ParsedInstruction) -> int: ...
-    def _Fx1E(self, inst: ParsedInstruction) -> int: ...
+    def _Fx18(self, inst: ParsedInstruction) -> int:
+        '''Set ST = Vx
+        The value in Vx is stored in the sound timer
+        1 cycle.'''
+        self.st = self.reg.get(inst.x)
+        return 1
+
+    def _Fx1E(self, inst: ParsedInstruction) -> int:
+        '''ADD I, Vx
+        Set I = I + Vx
+        1 cycle.'''
+        self.i = self.i + self.reg.get(inst.x)
+        return 1
+
     def _Fx29(self, inst: ParsedInstruction) -> int: ...
-    def _Fx33(self, inst: ParsedInstruction) -> int: ...
-    def _Fx55(self, inst: ParsedInstruction) -> int: ...
-    def _Fx65(self, inst: ParsedInstruction) -> int: ...
+    def _Fx33(self, inst: ParsedInstruction) -> int:
+        '''LD B, Vx
+        Store BCD representation of Vx in memory locations I, I+1, I+2
+        1 cycle.'''
+
+        return 1
+
+    def _Fx55(self, inst: ParsedInstruction) -> int:
+        '''LD [I], Vx
+        Stores registers V0-Vx inclusive in memory starting at I
+        1 cycle.'''
+        for off in range(0, inst.x+1):
+            self.mem[self.i + off] = self.reg.get(off)
+        return 1
+
+    def _Fx65(self, inst: ParsedInstruction) -> int:
+        '''LD Vx, [I]
+        Read registers V0-Vx inclusive from memory starting at I
+        1 cycle.'''
+        for k in range(0, inst.x+1):
+            self.reg.set(k, self.mem.read_byte_unaligned(self.i + k))
+        return 1
+
 
     # Opcode to instance method pointer lookup table
     _method_lookup_table: Dict[int, Callable] = {
@@ -241,6 +372,7 @@ class CPU(object):
         0x8003: _8xy3,
         0x8004: _8xy4,
         0x8005: _8xy5,
+        0x8006: _8xy6,
         0x8007: _8xy7,
         0x800E: _8xyE,
         0x9000: _9xy0,
@@ -268,7 +400,7 @@ class Chip8(object):
     def reset(self) -> None:
         self.cpu.reset()
 
-    def step(self, n_cycles: int = 1, debug=False) -> None:
+    def step(self, n_cycles: int = 1, debug=False, profile=False) -> None:
         if debug == True:
             lut = self.cpu._method_lookup_table
             ip = self.cpu.ip
@@ -277,19 +409,25 @@ class Chip8(object):
             stack = self.cpu.stack
             dt = self.cpu.dt
             st = self.cpu.st
-            print(f"{'-'*32}\nIP: {hex(ip)}, DT: {dt}, ST: {st}\n{reg}\n{stack}\n{mem[ip]}\n{lut[mem[ip].opcode].__doc__}")
+            i = self.cpu.i
+            print(f"{'-'*32}\nBEFORE EXECUTION:\nIP: {hex(ip)}, DT: {dt}, ST: {st}, I: {hex(i)},\n{reg}\n{stack}\n{mem[ip]}\n{lut[mem[ip].opcode].__doc__}")
+        if profile:
+            t1 = timer()
         self.cpu.step_ip(n_cycles=n_cycles)
+        if profile:
+            print(f'{hex(self.cpu.mem[self.cpu.ip].opcode)}, {timer() - t1}')
         if debug == True:
             ip = self.cpu.ip
             reg = self.cpu.reg.reg
             stack = self.cpu.stack
             dt = self.cpu.dt
             st = self.cpu.st
-            print(f"IP: {hex(ip)}, DT: {dt}, ST: {st}\n{reg}\n{stack}\n{mem[ip]}\n")
+            i = self.cpu.i
+            print(f"AFTER EXECUTION:\nIP: {hex(ip)}, DT: {dt}, ST: {st}, I: {hex(i)}\n{reg}\n{stack}\n{mem[ip]}\n")
 
-    def load(self, filename: str):
+    def load(self, filename: str, offset=0x200):
         '''Opens, parses, and loads a Chip8 binary program into memory at 0x200'''
         for idx, parsed_instruction in enumerate(parser.parse(filename)):
             # Store ParsedInstruction objects at 2-byte alignments
             assert type(parsed_instruction) == type(parser.ParsedInstruction(0))
-            self.cpu.mem[0x200+(2*idx)] = parsed_instruction
+            self.cpu.mem[offset+(2*idx)] = parsed_instruction

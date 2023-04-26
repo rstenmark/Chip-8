@@ -1,0 +1,1 @@
+python main.py "ROM/trip8.bin"

@@ -1,0 +1,6 @@
+Include/
+Lib/
+ROM/
+Scripts/
+*.cfg
+*.py[cod]
