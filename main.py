@@ -1,62 +1,100 @@
-import chip8.cpu as cpu
-from pathlib import Path
 import sys
+from math import floor
+from time import time_ns
+
+from chip8 import vm
 import pygame
 
+import psutil
+
 if __name__ == "__main__":
-    c8 = cpu.Chip8()
+    # Pin process to core 2 thread 1 (on HT/SMT CPU)
+    psutil.Process().cpu_affinity(
+        [
+            2,
+        ]
+    )
+    # Init CHIP-8 object
+    c8 = vm.VM()
+
+    # CHIP-8 program filepath passed as argument
     filepath = sys.argv[1]
+
+    # Load CHIP-8 program from disk
     c8.load(filepath)
-    
+
+    # Init pygame
     pygame.init()
-    screen = pygame.display.set_mode((384, 384))
-    pygame.display.set_caption("Chip-8")
-    
+    # Init pygame clock
     clock = pygame.time.Clock()
+    # Configure pygame window
+    screen = pygame.display.set_mode((384, 384))
+    pygame.display.set_caption("CHIP-8")
+
+    # Timing
+    one_frame_ns = 166_666_666
+    last_frame_ns = 0
+
+    # State
     game_running = True
-    cpu_running = True
     crash_exception = None
+    interpreter_cycle = 0
 
-
+    # Main loop
     while game_running:
         try:
+            # Close on any key press
             for event in pygame.event.get():
                 if event.type == pygame.KEYDOWN:
                     game_running = False
 
-            if cpu_running:
-                # Blank screen each frame
+            # Simulate CPU cycle
+            c8.step(n_cycles=1)
+            interpreter_cycle += 1
+
+            # Interpreter exit signal
+            if c8.cpu.ip == 0x10:
+                game_running = False
+                print(f"Program exit")
+                break
+
+            # Interpreter draw call
+            if c8.is_drawing() is True:
+                # Blank
                 screen.fill("black")
-                
-                # Simulate CPU cycle
-                c8.step(n_cycles=1, debug=True, profile=False)
-                #try:
-                #    c8.step(n_cycles=1, debug=False, profile=False)
-                #except Exception as e:
-                #    cpu_running = False
-                #    screen.fill("darkred")
-                #    print(f'panic!')
-                #    e = crash_exception
 
                 # Redraw
                 for x in range(0, 64):
                     for y in range(0, 32):
                         if c8.cpu.display.get_pixel(x, y) > 0:
-                            screen.set_at((2*x+132, 2*y+148), "white")
+                            # Pixel doubling
+                            screen.set_at((2 * x + 132, 2 * y + 148), (255,) * 3)
+                            screen.set_at((2 * x + 132, 2 * y + 148 + 1), (255,) * 3)
+                            screen.set_at((2 * x + 132 + 1, 2 * y + 148), (255,) * 3)
+                            screen.set_at(
+                                (2 * x + 132 + 1, 2 * y + 148 + 1), (255,) * 3
+                            )
                         else:
                             pass
 
-                # Flip display
+                # Flip
                 pygame.display.flip()
 
-                # Interpreter exit
-                if c8.cpu.ip == 0x10:
-                    cpu_running = False
-                    print(f'Program exit')
+                # Force tick
+                # time_now = time_ns()
+                # last_frame_ns = time_now
+                # clock.tick()
 
-            pygame.display.set_caption(f"Chip-8: FPS: {round(clock.get_fps(), 2)}, ROM: {filepath}")
-            clock.tick(240*4)
+            # Tick engine clock every 16.6 ms
+            time_now = time_ns()
+            if time_now - last_frame_ns > one_frame_ns:
+                last_frame_ns = time_now
+                clock.tick()
+                # Update window title
+                pygame.display.set_caption(
+                    f"CHIP-8: cycle: {interpreter_cycle}, ROM: {filepath}"
+                )
 
-        except(KeyboardInterrupt):
-            running = False
+        except KeyboardInterrupt:
+            game_running = False
             raise crash_exception

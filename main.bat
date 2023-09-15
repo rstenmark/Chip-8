@@ -1,1 +1,1 @@
-python main.py "ROM/trip8.bin"
+python main.py "ROM/corax+.ch8"

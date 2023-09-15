@@ -13,28 +13,18 @@ class Display(list):
             self.append(0)
 
     def reset(self) -> None:
-        '''Sets all pixel values to 0 (off)'''
+        """Sets all pixel values to 0 (off)"""
         for i in range(0, self.SCR_PIX):
             self[i] = 0
 
     def _xy_to_idx(self, x: int, y: int) -> int:
-        '''Converts XY coordinates to a display memory address'''
-        idx = y * self.SCR_W + x
-        if idx >= 0 and idx < self.SCR_PIX:
-            return idx
-        else:
-            return -1
+        """Converts XY coordinates to a display memory address"""
+        return y * self.SCR_W + x
 
     def set_pixel(self, x: int, y: int, v: int) -> None:
-        '''Sets the pixel at xy to value v'''
-        idx = self._xy_to_idx(x, y)
-        if idx != -1:
-            self[idx] = v
+        """Sets the pixel at xy to value v"""
+        self[self._xy_to_idx(x, y)] = v
 
     def get_pixel(self, x: int, y: int) -> int:
-        '''Returns the value stored in the pixel at xy'''
-        idx = self._xy_to_idx(x, y)
-        if idx != -1:
-            return self[idx]
-        else:
-            return 0
+        """Returns the value stored in the pixel at xy"""
+        return self[self._xy_to_idx(x, y)]
