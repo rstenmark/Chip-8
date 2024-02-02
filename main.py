@@ -9,11 +9,7 @@ import psutil
 
 if __name__ == "__main__":
     # Pin process to core 2 thread 1 (on HT/SMT CPU)
-    psutil.Process().cpu_affinity(
-        [
-            2,
-        ]
-    )
+    psutil.Process().cpu_affinity([2])
     # Init CHIP-8 object
     c8 = vm.VM()
 
@@ -23,12 +19,16 @@ if __name__ == "__main__":
     # Load CHIP-8 program from disk
     c8.load(filepath)
 
+    for idx, v in enumerate(c8.cpu.mem):
+        if v != 0:
+            print(f"{hex(idx)} h | {idx} d -> {v}")
+
     # Init pygame
     pygame.init()
     # Init pygame clock
     clock = pygame.time.Clock()
     # Configure pygame window
-    screen = pygame.display.set_mode((384, 384))
+    screen = pygame.display.set_mode((128, 64))
     pygame.display.set_caption("CHIP-8")
 
     # Timing
@@ -68,12 +68,11 @@ if __name__ == "__main__":
                     for y in range(0, 32):
                         if c8.cpu.display.get_pixel(x, y) > 0:
                             # Pixel doubling
-                            screen.set_at((2 * x + 132, 2 * y + 148), (255,) * 3)
-                            screen.set_at((2 * x + 132, 2 * y + 148 + 1), (255,) * 3)
-                            screen.set_at((2 * x + 132 + 1, 2 * y + 148), (255,) * 3)
-                            screen.set_at(
-                                (2 * x + 132 + 1, 2 * y + 148 + 1), (255,) * 3
-                            )
+                            c = (255,) * 3
+                            screen.set_at((2 * x, 2 * y), c)
+                            screen.set_at((2 * x, 2 * y + 1), c)
+                            screen.set_at((2 * x + 1, 2 * y), c)
+                            screen.set_at((2 * x + 1, 2 * y + 1), c)
                         else:
                             pass
 

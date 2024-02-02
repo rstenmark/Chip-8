@@ -77,8 +77,8 @@ class CPU(object):
                 self.st -= 1
             if self.dt > 0:
                 self.dt -= 1
-            # if IP did not change, increment it
-            if old_ip == self.ip:
+            # Increment IP if IP did not change and last instruction was not an unconditional jump.
+            if old_ip == self.ip and inst.opcode not in {0xEE, 0x1000, 0x2000}:
                 self.ip += 2
 
     def _push(self, v: int) -> None:
@@ -91,187 +91,145 @@ class CPU(object):
         self.sp -= 1
         return self.stack.pop()
 
-    def _0nnn(self, inst: ParsedInstruction) -> int:
+    def _0nnn(self, inst: ParsedInstruction) -> None:
         """Jump to a machine code routine at NNN.
-        No effects.
-        1 cycle."""
-        return 1
+        No effects."""
 
-    def _00E0(self, inst: ParsedInstruction) -> int:
+    def _00E0(self, inst: ParsedInstruction) -> None:
         """Clear the display.
-        Overwrites all values in self.display with 0.
-        1 cycle."""
+        Overwrites all values in self.display with 0."""
         self.display.reset()
-        return 1
 
-    def _00EE(self, inst: ParsedInstruction) -> int:
+    def _00EE(self, inst: ParsedInstruction) -> None:
         """Return from a subroutine (function).
-        Overwrites IP with 12-bit address popped off stack plus a 2 byte offset.
-        1 cycle."""
+        Overwrites IP with 12-bit address popped off stack plus a 2 byte offset."""
         self.ip = self.stack.pop()
-        return 1
 
-    def _1nnn(self, inst: ParsedInstruction) -> int:
+    def _1nnn(self, inst: ParsedInstruction) -> None:
         """Performs an immediate jump.
-        Overwrites IP with a 12-bit immediate address
-        1 cycle."""
+        Overwrites IP with a 12-bit immediate address"""
         if inst.nnn % 2 != 0:
             # "nudge" IP if not 2-byte unaligned
             self.set_ip(inst.nnn + 0x1)
         else:
             self.set_ip(inst.nnn)
 
-        return 1
-
-    def _2nnn(self, inst: ParsedInstruction) -> int:
+    def _2nnn(self, inst: ParsedInstruction) -> None:
         """Call subroutine (function).
         Pushes return address (plus 2) onto the stack,
-        then jumps to nnn.
-        1 cycle."""
+        then jumps to nnn."""
         self._push(self.ip + 0x2)
         self.set_ip(inst.nnn)
-        return 1
 
-    def _3xkk(self, inst: ParsedInstruction) -> int:
-        """Skip next instruction if Vx == kk
-        1 cycle."""
+    def _3xkk(self, inst: ParsedInstruction) -> None:
+        """Skip next instruction if Vx == kk"""
         if self.reg.get(inst.x) == inst.kk:
             # Relative jump
             self.ip += 4
-        return 1
 
-    def _4xkk(self, inst: ParsedInstruction) -> int:
-        """Skip next instruction if Vx != kk
-        1 cycle."""
+    def _4xkk(self, inst: ParsedInstruction) -> None:
+        """Skip next instruction if Vx != kk"""
         if self.reg.get(inst.x) != inst.kk:
             # Relative jump
             self.ip += 4
-        return 1
 
-    def _5xy0(self, inst: ParsedInstruction) -> int:
-        """Skip next instruction if Vx == Vy
-        1 cycle."""
+    def _5xy0(self, inst: ParsedInstruction) -> None:
+        """Skip next instruction if Vx == Vy"""
         if self.reg.get(inst.x) == self.reg.get(inst.y):
             # Relative jump
             self.ip += 4
-        return 1
 
-    def _6xkk(self, inst: ParsedInstruction) -> int:
-        """Set Vx = kk
-        1 cycle."""
+    def _6xkk(self, inst: ParsedInstruction) -> None:
+        """Set Vx = kk"""
         self.reg.set(inst.x, inst.kk)
-        return 1
 
-    def _7xkk(self, inst: ParsedInstruction) -> int:
-        """Set Vx = Vx + kk
-        1 cycle."""
+    def _7xkk(self, inst: ParsedInstruction) -> None:
+        """Set Vx = Vx + kk"""
         self.reg.set(inst.x, self.reg.get(inst.x) + inst.kk)
-        return 1
 
-    def _8xy0(self, inst: ParsedInstruction) -> int:
-        """Set Vx = Vy
-        1 cycle."""
+    def _8xy0(self, inst: ParsedInstruction) -> None:
+        """Set Vx = Vy"""
         self.reg.set(inst.x, self.reg.get(inst.y))
-        return 1
 
-    def _8xy1(self, inst: ParsedInstruction) -> int:
+    def _8xy1(self, inst: ParsedInstruction) -> None:
         """Set Vx = Vx OR Vy
         Quirks:
-        COSMAC: Resets VF
-        1 cycle."""
+        COSMAC: Resets VF"""
         self.reg.set(inst.x, self.reg.get(inst.x) | self.reg.get(inst.y))
-        return 1
 
-    def _8xy2(self, inst: ParsedInstruction) -> int:
+    def _8xy2(self, inst: ParsedInstruction) -> None:
         """Set Vx = Vx OR Vy
         Quirks:
-        COSMAC: Resets VF
-        1 cycle."""
+        COSMAC: Resets VF"""
         self.reg.set(inst.x, self.reg.get(inst.x) & self.reg.get(inst.y))
-        return 1
 
-    def _8xy3(self, inst: ParsedInstruction) -> int:
+    def _8xy3(self, inst: ParsedInstruction) -> None:
         """Set Vx = Vx XOR Vy
         Quirks:
-        COSMAC: Resets VF
-        1 cycle."""
+        COSMAC: Resets VF"""
         self.reg.set(inst.x, self.reg.get(inst.x) ^ self.reg.get(inst.y))
-        return 1
 
-    def _8xy4(self, inst: ParsedInstruction) -> int:
-        """Set Vx = Vx + Vy, set VF = carry
-        1 cycle."""
+    def _8xy4(self, inst: ParsedInstruction) -> None:
+        """Set Vx = Vx + Vy, set VF = carry"""
         result = self.reg.get(inst.x) + self.reg.get(inst.y)
         self.reg.set(inst.x, result & 0x00FF)
         if result % 255 > 0:
             self.reg.set(0xF, 1)
         else:
             self.reg.set(0xF, 0)
-        return 1
 
-    def _8xy5(self, inst: ParsedInstruction) -> int:
+    def _8xy5(self, inst: ParsedInstruction) -> None:
         """Set Vx = Vx - Vy
-        If Vx > Vy, set VF = 1 else VF = 0
-        1 cycle."""
+        If Vx > Vy, set VF = 1 else VF = 0"""
         vx, vy = self.reg.get(inst.x), self.reg.get(inst.y)
         self.reg.set(inst.x, vx - vy)
         if vx > vy:
             self.reg.set(0xF, 1)
         else:
             self.reg.set(0xF, 0)
-        return 1
 
-    def _8xy6(self, inst: ParsedInstruction) -> int:
+    def _8xy6(self, inst: ParsedInstruction) -> None:
         """If Vx LSB == 1 set VF = 1 else VF = 0. Then Vx = Vx >> 1 (divide by 2)."""
         self.reg.set(inst.x, self.reg.get(inst.x) >> 1)
         if self.reg.get(inst.x) & 0b0000_0001:
             self.reg.set(0xF, 1)
         else:
             self.reg.set(0xF, 0)
-        return 1
 
-    def _8xy7(self, inst: ParsedInstruction) -> int:
+    def _8xy7(self, inst: ParsedInstruction) -> None:
         """Set Vx = Vy - Vx
-        If Vy > Vx, set VF = 1 else VF = 0
-        1 cycle."""
+        If Vy > Vx, set VF = 1 else VF = 0"""
         vx, vy = self.reg.get(inst.x), self.reg.get(inst.y)
         self.reg.set(inst.x, vy - vx)
         if vy > vx:
             self.reg.set(0xF, 1)
         else:
             self.reg.set(0xF, 0)
-        return 1
 
-    def _8xyE(self, inst: ParsedInstruction) -> int:
+    def _8xyE(self, inst: ParsedInstruction) -> None:
         """If Vx MSB == 1 set VF = 1 else VF = 0. Then Vx = Vx << 1 (multiply by 2)."""
         self.reg.set(inst.x, self.reg.get(inst.x) << 1)
         if self.reg.get(inst.x) & 0b1000_0000:
             self.reg.set(0xF, 1)
         else:
             self.reg.set(0xF, 0)
-        return 1
 
-    def _9xy0(self, inst: ParsedInstruction) -> int:
+    def _9xy0(self, inst: ParsedInstruction) -> None:
         ...
 
-    def _Annn(self, inst: ParsedInstruction) -> int:
-        """Overwrites the value in register I with nnn.
-        1 cycle."""
+    def _Annn(self, inst: ParsedInstruction) -> None:
+        """Overwrites the value in register I with nnn.None"""
         self.i = inst.nnn
-        return 1
 
-    def _Bnnn(self, inst: ParsedInstruction) -> int:
+    def _Bnnn(self, inst: ParsedInstruction) -> None:
         """Jump to location nnn + V0"""
         self.set_ip(self.reg.get(0x0) + inst.nnn)
-        return 1
 
-    def _Cxkk(self, inst: ParsedInstruction) -> int:
-        """Set Vx = random byte AND kk
-        1 cycle."""
+    def _Cxkk(self, inst: ParsedInstruction) -> None:
+        """Set Vx = random byte AND kk"""
         self.reg.set(inst.x, randint(0, 255) & inst.kk)
-        return 1
 
-    def _Dxyn(self, inst: ParsedInstruction) -> int:
+    def _Dxyn(self, inst: ParsedInstruction) -> None:
         """Draw n-byte sprite starting at I at (Vx, Vy), setting VF on collision"""
         # NOTE:
         # Sprites may be up to 15 bytes, or 8x15 pixels
@@ -312,61 +270,49 @@ class CPU(object):
                         self.display.set_pixel(xx, yy, 1)
 
             y_offset += 1
-        return 1
 
-    def _Ex9E(self, inst: ParsedInstruction) -> int:
+    def _Ex9E(self, inst: ParsedInstruction) -> None:
         raise NotImplementedError
 
-    def _ExA1(self, inst: ParsedInstruction) -> int:
+    def _ExA1(self, inst: ParsedInstruction) -> None:
         raise NotImplementedError
 
-    def _Fx07(self, inst: ParsedInstruction) -> int:
+    def _Fx07(self, inst: ParsedInstruction) -> None:
         """Set Vx = DT
-        The value of the delay timer is stored in Vx
-        1 cycle."""
+        The value of the delay timer is stored in Vx"""
         self.reg.set(inst.x, self.dt)
-        return 1
 
-    def _Fx0A(self, inst: ParsedInstruction) -> int:
+    def _Fx0A(self, inst: ParsedInstruction) -> None:
         raise NotImplementedError
 
-    def _Fx15(self, inst: ParsedInstruction) -> int:
+    def _Fx15(self, inst: ParsedInstruction) -> None:
         """Set DT = Vx
-        The value in Vx is stored in the delay timer
-        1 cycle."""
+        The value in Vx is stored in the delay timer"""
         self.dt = self.reg.get(inst.x)
-        return 1
 
-    def _Fx18(self, inst: ParsedInstruction) -> int:
+    def _Fx18(self, inst: ParsedInstruction) -> None:
         """Set ST = Vx
-        The value in Vx is stored in the sound timer
-        1 cycle."""
+        The value in Vx is stored in the sound timer"""
         self.st = self.reg.get(inst.x)
-        return 1
 
-    def _Fx1E(self, inst: ParsedInstruction) -> int:
+    def _Fx1E(self, inst: ParsedInstruction) -> None:
         """ADD I, Vx
-        Set I = I + Vx
-        1 cycle."""
+        Set I = I + Vx"""
         self.i = self.i + self.reg.get(inst.x)
-        return 1
 
-    def _Fx29(self, inst: ParsedInstruction) -> int:
+    def _Fx29(self, inst: ParsedInstruction) -> None:
         raise NotImplementedError
 
-    def _Fx33(self, inst: ParsedInstruction) -> int:
+    def _Fx33(self, inst: ParsedInstruction) -> None:
         """LD B, Vx
-        Store BCD representation of Vx in memory locations I, I+1, I+2
-        1 cycle."""
+        Store BCD representation of Vx in memory locations I, I+1, I+2"""
         raise NotImplementedError
 
-    def _Fx55(self, inst: ParsedInstruction) -> int:
+    def _Fx55(self, inst: ParsedInstruction) -> None:
         """LD [I], Vx
-        Stores registers V0-Vx inclusive in memory starting at I
-        1 cycle."""
+        Stores registers V0-Vx inclusive in memory starting at I"""
         for off in range(0, inst.x + 1):
             self.mem[self.i + off] = self.reg.get(off)
-        return 1
 
     def _Fx65(self, inst: ParsedInstruction) -> None:
         """LD Vx, [I]

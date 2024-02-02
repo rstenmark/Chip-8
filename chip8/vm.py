@@ -27,4 +27,4 @@ class VM(object):
         for idx, parsed_instruction in enumerate(parse_file(filename)):
             # Store ParsedInstruction objects at 2-byte alignments
             assert isinstance(parsed_instruction, ParsedInstruction) is True
-            self.cpu.mem[offset + (2 * idx)] = parsed_instruction
+            self.cpu.mem[2 * idx + offset] = parsed_instruction
